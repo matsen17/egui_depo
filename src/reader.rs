@@ -1,20 +1,17 @@
 use serde::{Serialize, Deserialize};
-use crate::book::Book;
-use crate::book::Magazine;
+use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Reader {
+    pub uuid: Uuid,
     pub name: String,
-    pub books_borrowed: Vec<Book>,
-    pub magazines_borrowed: Vec<Magazine>
 }
 
 impl Reader {
     pub fn create(name: &str) -> Self {
-        Self { 
+        Self {
+            uuid: Uuid::new_v4(), 
             name: String::from(name),
-            books_borrowed: Vec::new(),
-            magazines_borrowed: Vec::new()
         }
     }
 }

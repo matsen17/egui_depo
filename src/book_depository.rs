@@ -1,5 +1,7 @@
-use std::{borrow::Cow, iter::FromIterator};
+use std::{borrow::Cow, iter::FromIterator, rc::Rc};
 use eframe::egui::{self, Button, Color32, CtxRef, FontDefinitions, FontFamily, Hyperlink, Label, Layout, Separator, TopBottomPanel, Window, epaint::text};
+use serde_json::de::Read;
+use uuid::Uuid;
 
 pub const PADDING: f32 = 5.0;
 const WHITE: Color32 = Color32::from_rgb(255, 255, 255);
@@ -8,13 +10,12 @@ const CYAN: Color32 = Color32::from_rgb(0, 255, 255);
 use crate::{book::{Book, Magazine, DepositoryItem}, reader::{self, Reader}, AddCommand};
 
 pub struct BookDepository {
-    pub books: Vec<Book>,
-    pub magazines: Vec<Magazine>,
+    pub books: Vec<Rc<Book>>,
+    pub magazines: Vec<Rc<Magazine>>,
     pub readers: Vec<Reader>,
+    pub catalogue: Vec<Item>,
     
-    pub selected_book_for_borrow: Option<Book>,
-    pub selected_magazine_for_borrow: Option<Magazine>,
-    
+    pub selected_item_for_borrow_uuid: Option<Uuid>,
     // inputs
     pub name_input: String,
     pub year_input: String,
@@ -23,6 +24,11 @@ pub struct BookDepository {
 
     //commands
     pub add_command: AddCommand
+}
+
+pub struct Item {
+    pub item: Rc<dyn DepositoryItem>,
+    pub reader: Option<Uuid>
 }
 
 impl BookDepository {
@@ -39,7 +45,7 @@ impl BookDepository {
         let mut font_def = FontDefinitions::default();
         font_def.font_data.insert(
             "MesloLGS".to_string(),
-            Cow::Borrowed(include_bytes!("../../MesloLGS_NF_Regular.ttf")),
+            Cow::Borrowed(include_bytes!("../res/MesloLGS_NF_Regular.ttf")),
         );
         font_def.family_and_size.insert(
             eframe::egui::TextStyle::Heading,
@@ -58,14 +64,18 @@ impl BookDepository {
     }
 
     pub fn render_depository_items(&mut self, ui: &mut eframe::egui::Ui, ctx: &CtxRef) {
-        for book in &self.books {
+        for item in &self.catalogue {
             ui.add_space(PADDING);
             // render title
-            let title = format!("▶ {}", book.title);
+            let icon = match item.reader {
+                Some(_) => "x",
+                None => "▶"
+            };
+            let title = format!("{} {}", icon, item.item.get_title());
             ui.colored_label(WHITE, title);
             // render desc
             ui.add_space(PADDING);
-            let desc = Label::new(book.year).text_style(eframe::egui::TextStyle::Button);
+            let desc = Label::new(item.item.get_year()).text_style(eframe::egui::TextStyle::Button);
             ui.add(desc);
 
             // render hyperlinks
@@ -76,32 +86,7 @@ impl BookDepository {
                 let remove_btn = ui.add(Button::new("❌").text_style(egui::TextStyle::Body));
 
                 if borrow_button.clicked() {
-                    self.selected_book_for_borrow = Some(book.clone()); 
-                }
-            
-            });
-            ui.add_space(PADDING);
-            ui.add(Separator::default());
-        }
-        for magazine in &self.magazines {
-            ui.add_space(PADDING);
-            // render title
-            let title = format!("▶ {}", magazine.title);
-            ui.colored_label(WHITE, title);
-            // render desc
-            ui.add_space(PADDING);
-            let desc = Label::new(magazine.year).text_style(eframe::egui::TextStyle::Button);
-            ui.add(desc);
-
-            // render hyperlinks
-            ui.style_mut().visuals.hyperlink_color = CYAN;
-            ui.add_space(PADDING);
-            ui.with_layout(Layout::right_to_left(), |ui| {
-                let borrow_button = ui.add(Button::new("Borrow").text_style(egui::TextStyle::Body));
-                let remove_btn = ui.add(Button::new("❌").text_style(egui::TextStyle::Body));
-
-                if borrow_button.clicked() {
-                    self.selected_magazine_for_borrow = Some(magazine.clone()); 
+                    self.selected_item_for_borrow_uuid = Some(item.item.get_uuid().clone()); 
                 }
             });
             ui.add_space(PADDING);
@@ -138,6 +123,4 @@ impl BookDepository {
             ui.add_space(10.);
         });
     }
-
-
 }

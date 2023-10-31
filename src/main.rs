@@ -19,7 +19,9 @@ use book::{Book, DepositoryItem};
 use book::Magazine;
 
 
-use book_depository::{BookDepository, PADDING};
+use book_depository::{BookDepository, PADDING, Item};
+use serde::de;
+use uuid::Uuid;
 
 pub enum AddCommand {
     None,
@@ -84,7 +86,7 @@ impl App for BookDepository {
                                 }
                             };
 
-                            self.books.push(Book::create(self.isbn_input.clone(), self.name_input.clone(), book_year_int));
+                            self.books.push(Rc::new(Book::new(self.isbn_input.clone(), self.name_input.clone(), book_year_int)));
                             self.add_command = AddCommand::None;
                             self.clear_inputs();
                         }
@@ -114,7 +116,7 @@ impl App for BookDepository {
                                 }
                             };
 
-                            self.magazines.push(Magazine::create(self.isbn_input.clone(), self.name_input.clone(), book_year_int, self.superhero_input.clone()));
+                            self.magazines.push(Rc::new(Magazine::new(self.isbn_input.clone(), self.name_input.clone(), book_year_int, self.superhero_input.clone())));
                             self.add_command = AddCommand::None;
                             self.clear_inputs();
                         }
@@ -122,29 +124,8 @@ impl App for BookDepository {
             }
         }
 
-        if let Some(selected_book) = &self.selected_book_for_borrow {
-            // try Rc::new() 
-            let book_for_borrow = selected_book.clone();
-            Window::new("Borrow Book")
-                .show(ctx, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Borrower's Name:");
-                        ui.text_edit_singleline(&mut self.name_input);
-                    });
-
-                    let selected_name = String::from(&self.name_input);
-                
-                    if ui.button("Confirm Borrow").clicked() {
-                        borrow_item_for_reader(&mut self.readers, book_for_borrow, selected_name, &mut self.books);
-                        self.selected_book_for_borrow = None;
-                        self.clear_inputs();
-                    }
-                });
-        }
-
-        if let Some(selected_magazine)  = &self.selected_magazine_for_borrow {
-            let magazine_for_borrow = selected_magazine.clone();
-            Window::new("Borrow Magazine")
+        if let Some(uuid) = self.selected_item_for_borrow_uuid {
+            Window::new("Borrow item")
                 .show(ctx, |ui| {
 
                     ui.horizontal(|ui| {
@@ -154,9 +135,12 @@ impl App for BookDepository {
 
                     let selected_name = String::from(&self.name_input);
                 
+                    let reader = self.readers.iter().find(|r| r.name.cmp(&selected_name).is_eq());
                     if ui.button("Confirm Borrow").clicked() {
-                        borrow_item_for_reader(&mut self.readers, magazine_for_borrow, selected_name, &mut self.magazines);
-                        self.selected_magazine_for_borrow = None;
+                        if let Some(reader) = reader {
+                            borrow_item_for_reader(&mut self.catalogue, &uuid,reader);
+                            self.selected_item_for_borrow_uuid = None;
+                        }
                         self.clear_inputs();
                     }
                 });
@@ -172,7 +156,7 @@ impl App for BookDepository {
 
     fn on_exit(&mut self) {
 
-        match persistence::save_to_file("books_depo.json", &self.books, &self.magazines, &self.readers) {
+        match persistence::save_to_file("books_depo.json", &self.books, &self.magazines, &self.catalogue,&self.readers) {
             Ok(()) => println!("Data saved successfully."),
             Err(err) => eprintln!("Error saving data: {}", err),
         }
@@ -195,15 +179,45 @@ fn render_header(ui: &mut Ui) {
 }
 
 fn main() {
-    let depository_books: Vec<Book>;
-    let depository_magazines: Vec<Magazine>;
+    let depository_books: Vec<Rc<Book>>;
+    let depository_magazines: Vec<Rc<Magazine>>;
     let depository_readers: Vec<Reader>;
+    let depository_catalogue : Vec<Item>;
 
     match persistence::load_from_file("books_depo.json") {
         Ok(read_result, ) => {
-            depository_books = read_result.0;
-            depository_magazines = read_result.1;
+            depository_books = read_result.0.into_iter().map(|b| {Rc::new(b)}).collect();
+            depository_magazines = read_result.1.into_iter().map(|m| {Rc::new(m)}).collect();
             depository_readers = read_result.2;  
+            let mut books_as_items: Vec<Item> = depository_books.iter().map(|b| {
+                let reader = read_result.3.iter().find(|r| r.0.eq(b.get_uuid()));
+                Item {
+                    item: b.clone(),
+                    reader: match reader {
+                        Some(r) => {
+                            Some(r.1.clone())
+                        },
+                        None => None,
+                    }
+                }
+            }).collect();
+
+            let magazines_as_items: Vec<Item> = depository_magazines.iter().map(|b| {
+                let reader = read_result.3.iter().find(|r| r.0.eq(b.get_uuid()));
+                Item {
+                    item: b.clone(),
+                    reader: match reader {
+                        Some(r) => {
+                            Some(r.1.clone())
+                        },
+                        None => None,
+                    }
+                }
+            }).collect();
+            println!("bi {}, mi {}", books_as_items.len(), magazines_as_items.len());
+            books_as_items.extend(magazines_as_items.into_iter());
+
+            depository_catalogue = books_as_items;
         },
         Err(err) => {
             eprintln!("Error loading book depository data: {}", err);
@@ -211,21 +225,12 @@ fn main() {
         },
     }
 
-    /* let number = 24;
-    
-    let number_rc = Rc::new(number);
-    let number_arc = Arc::new(number);
-
-    let number_rc_sum = *number_rc + 17;
-    */
-
     let app = BookDepository {
         books: depository_books,
         magazines: depository_magazines,
         readers: depository_readers,
-        selected_magazine_for_borrow: None,
-        selected_book_for_borrow: None,
-
+        catalogue: depository_catalogue,
+        selected_item_for_borrow_uuid: None,
         name_input: String::from(""),
         year_input: String::from(""),
         superhero_input: String::from(""),
@@ -238,24 +243,26 @@ fn main() {
     run_native(Box::new(app), win_option);
 }
 
-fn borrow_item_for_reader<T: DepositoryItem>(readers: &mut Vec<Reader>, selected_item: T, selected_reader_name: String, items: &mut Vec<T>) {
-    for i in 0..readers.len() {
-        if readers[i].name.trim().to_lowercase() == selected_reader_name.to_lowercase() {
-            remove_depository_item(items, selected_item.get_isbn_code());
-            selected_item.borrow_for_reader(&mut readers[i]);
-            return;
+fn borrow_item_for_reader(catalogue: &mut Vec<Item>, uuid: &Uuid, reader: &Reader) {
+    println!("rrrr {} {}", uuid, reader.uuid);
+    for item in catalogue.iter_mut() {
+        if item.item.get_uuid().cmp(uuid).is_eq() {
+            item.reader = Some(reader.uuid.clone());
         }
     }
-    println!("No reader was found");
 }
 
-fn remove_depository_item<T: DepositoryItem>(items: &mut Vec<T>, item_code: &String) {
-    for i in (0..items.len()).rev() {
-        if items[i].get_isbn_code() == item_code {
-            items.swap_remove(i);
-            println!("Found and removed item");
-            break;
-        }
+fn remove_depository_item(depo: &mut BookDepository, uuid: Uuid) {
+    if let Some(idx) = depo.catalogue.iter().position(|i| (*i.item.get_uuid()) == uuid) {
+        depo.catalogue.swap_remove(idx);
+    }
+
+    if let Some(idx_books) = depo.books.iter().position(|b| (*b.get_uuid()) == uuid) {
+        depo.books.swap_remove(idx_books); 
+    }else if let Some(idx_magazines) = depo.magazines.iter().position(|m| (*m.get_uuid()) == uuid) {
+        depo.magazines.swap_remove(idx_magazines);
+    }else{
+        println!("Didn't find item with uuid of: {}", uuid);
     }
 }
 
